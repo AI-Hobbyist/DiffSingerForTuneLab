@@ -404,9 +404,9 @@ TuneLab 在切换引擎 / 音源时，**不清空 part 里已存的属性与 aut
 
 | key | 类型 | 量程 | 基线 | 单位含义 | 合成期换算（消费点） |
 |---|---|---|---|---|---|
-| `gender` | 加性 | `[-1, 1]` | `0` | ±1 = formant 增广满程；正=下移 | `GenderConvert`：`±1`→`12/KeyShift*` |
-| `speed` | 乘性(对数) | `[0, 2]` | `1` | 1=原速，每 +1 速度 ×2 | `SpeedConvert`：`2^(x-1)` |
-| `shift_mouth_opening` | 加性 | `[-1, 1]` | `0` | SHMC 口型偏移 alpha：0=不干预，±1=推满开/闭 | 透传（模型原生量程即 [-1,1]，无 convert） |
+| `gender` | 加性 | `[-1, 1]` | `0` | ±1 = formant 增广满程；正=下移 | clamp 量程 → `GenderConvert`：`±1`→`12/KeyShift*` |
+| `speed` | 乘性(对数) | `[0, 2]` | `1` | 1=原速，每 +1 速度 ×2 | clamp 量程 → `SpeedConvert`：`2^(x-1)` |
+| `shift_mouth_opening` | 加性 | `[-1, 1]` | `0` | SHMC 口型偏移 alpha：0=不干预，±1=推满开/闭 | clamp 量程 → 透传（模型原生量程即 [-1,1]，无 convert） |
 | `energy` | 加性 delta | `[-1, 1]` | `0` | 1.0 = +12 dB 偏移 | `Delta: x + y*12` → clamp `[-96,0]`dB |
 | `breathiness` | 加性 delta | `[-1, 1]` | `0` | 1.0 = +12 dB 偏移 | `Delta: x + y*12` → clamp `[-96,0]`dB |
 | `voicing` | 混合 delta | `[0, 1.25]` | `1` | 1=不变，0 = 触底 −96 dB，1.25 = +12 dB | 下行 `x − 48(1−y)/(2−y) − (x+72)(1−y)¹²`；上行 `x + 48(y−1)` → clamp `[-96,0]`dB，见下 |
@@ -417,6 +417,8 @@ TuneLab 在切换引擎 / 音源时，**不清空 part 里已存的属性与 aut
 | `seed_pitch`/`seed_variance`/`seed_acoustic` | 标称 | `[0, 1]` | `0` | 见 §14.3 | `round(v·uint.MaxValue)`→uint32 哈希 |
 
 > 反例：`speed` **不要**归一到 `[0,1]`——百分比倍率（1=原速）本身是更强的公共认知。归一化只对无物理单位或可任意定标的量做。
+
+> **量程钳位是插件的责任，每条轨都要做。** 宿主明文不担保 `Evaluate` 的返回值落在轨声明的 `[MinValue, MaxValue]` 内：`INormalizedScale` 只定义值轴形状与格点（求值投影只落格、不钳值域——标度单调只是约定，非单调时端点不是极值，钳位是无法兑现的保证），而值模型是**加性**的——锚点存的是相对默认值的偏移、vibrato 偏移也加性叠到轨上，所以用户拖默认值滑条或让 vibrato 影响该轨，**正常使用即可让求值结果出界**（越界锚点在参数区被裁剪成贴边，肉眼与合法的贴边值无从区分）。故上表每个消费点都自钳：`gender`/`speed`/`shift_mouth_opening` 见 [DiffSingerCurveInput.cs](../DiffSingerCurveInput.cs)，四个 variance 走 `CombineVariance` 双钳（输入钳编辑量程、输出钳声学值域），`mix:<suffix>`、`phoneme_mix:k`、`expressiveness`、`tone_shift`、三条 seed 各在采样处钳。**OpenUtau 不钳不构成先例**：它在命令层（`ExpCommands.SetCurveCommand`）就把曲线值钳进 descriptor 量程、曲线又存绝对值无加性合成，渲染器读到的必在量程内。
 
 **voicing 的公式是对 OpenUtau 基准的有意偏离**（其余三条忠实移植 OpenUtau `VarianceDeltaFunctions`，系数按小数刻度 ×100）。OpenUtau 的 voicing 满偏只有 −12 dB 且只降不升：够不着静音底（无法做纯气声/耳语段）、也无法把谐波抬到预测之上。改为双支：下行（y≤1）「饱和有理项 + 十二次幂跳水项」`实参 = 预测 − 48(1−y)/(2−y) − (预测+72)(1−y)¹²`，按三个锚定需求逐点定形；上行（1<y≤1.25）线性 `实参 = 预测 + 48(y−1)`，满偏 +12 dB（与 energy 正向满偏对齐、避开 0dBFS 过载区——实测满偏 +48 dB 的版本一画就爆音），中性线两侧斜率相等（48）、过线仅二阶导跳变、无顿挫。下行三锚定：
 
