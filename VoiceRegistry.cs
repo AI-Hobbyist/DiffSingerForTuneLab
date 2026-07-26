@@ -110,8 +110,11 @@ public sealed class VoiceRegistry
         // legacy/未适配：模型 id 用 manifest.id（若有）否则文件夹名；voice 从 dsconfig speakers 派生。
         string modelId = manifest?.ModelId is { Length: > 0 } mid ? mid : new DirectoryInfo(root).Name;
         string folder = new DirectoryInfo(root).Name;
+        string singerName = CharacterMetadata.ReadTextName(root) is { } textName && !string.IsNullOrWhiteSpace(textName)
+            ? textName
+            : folder;
         string modelName = manifest is not null && manifest.Name.Length > 0 ? manifest.Name
-            : (string.IsNullOrWhiteSpace(meta.Name) ? folder : meta.Name!);
+            : singerName;
         var pmL = new PkgModel(modelId, modelName,
             manifest?.NameI18n ?? EmptyMap, manifest?.Version ?? 0, manifest?.VersionLabel,
             manifest?.VersionLabelI18n ?? EmptyMap, LegacyReleasedKey(root, manifest), manifest);
@@ -135,6 +138,14 @@ public sealed class VoiceRegistry
         {
             // voice id = speaker 后缀本身（不加文件夹前缀）⇒ 多个文件夹里的同一 speaker 按 voice id 聚合成一个 voice、
             //   各文件夹成为它的一个 model（文件夹/character 名即 model 显示名）。名用 suffix（model 名在模型下拉里区分）。
+            if (suffixes.Count == 1)
+            {
+                // A single configured speaker is still a single-singer voicebank: display its character name.
+                list.Add(new ManifestVoice(DiffSingerDeclarations.Suffix(suffixes[0]), suffixes[0], singerName,
+                    EmptyMap, null, meta.PortraitOrImage, null));
+                return (pmL, list);
+            }
+
             foreach (var entry in suffixes)
             {
                 var suffix = DiffSingerDeclarations.Suffix(entry);

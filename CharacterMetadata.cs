@@ -29,6 +29,14 @@ internal static class CharacterMetadata
         return new Result(null, null, null);
     }
 
+    // The singer label in the voice menu follows OpenUtau's traditional character.txt.
+    // The caller falls back to the voicebank folder when this is absent or blank.
+    public static string? ReadTextName(string bankDir)
+    {
+        var txt = Path.Combine(bankDir, "character.txt");
+        return File.Exists(txt) ? FromTxt(txt).Name : null;
+    }
+
     static Result FromYaml(string path)
     {
         try
@@ -77,7 +85,10 @@ internal static class CharacterMetadata
                     var value = line[(eq + 1)..].Trim();
                     switch (key)
                     {
-                        case "name": name ??= value; break;
+                        case "name":
+                            if (string.IsNullOrWhiteSpace(name) && !string.IsNullOrWhiteSpace(value))
+                                name = value;
+                            break;
                         case "author":
                         case "voice": author ??= value; break;
                         case "image": image ??= value; break;
