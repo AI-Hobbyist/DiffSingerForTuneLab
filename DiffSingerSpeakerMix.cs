@@ -41,7 +41,12 @@ public sealed class DiffSingerSpeakerMix
             for (int f = 0; f < nFrames; f++)
             {
                 double v = f < sampled.Length ? sampled[f] : double.NaN;
-                if (!double.IsNaN(v)) w[f] += (float)v;
+                // 用户值钳到 [0,1]：轨声明即 Continuous(color, 0, 0, 1)、宿主 UI 落笔时钳制，但数据层无硬契约
+                //   （锚点+默认值合成、跨引擎同 key 复用、手改工程皆可越界）——同 CombineVariance 的兜底理由。
+                //   负权重尤其危险：它会让下方「Σ>1 才归一」的判据失效（负值把 Σ 拉回 ≤1），
+                //   于是既不归一、默认 suffix 又补上 1-Σ>1，混出凸包外的 embedding（外插而非插值）。
+                //   同形态的 phoneme_mix 轨在 DiffSingerSynthesisSession 采样处已 clamp，此处对齐。
+                if (!double.IsNaN(v)) w[f] += (float)Math.Clamp(v, 0, 1);
             }
         }
 
