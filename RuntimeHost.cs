@@ -100,12 +100,11 @@ internal sealed class RuntimeHost : IDisposable
     InferenceSession LoadSession(string modelPath)
     {
         var options = new SessionOptions();
-        if (mProvider == "cpu")
-            // onnxruntime 1.20.1 的 CPU EP 扩展层图优化（ORT_ENABLE_EXTENDED 及以上，含默认的 ORT_ENABLE_ALL）
-            //   在 DiffSinger 声学图上原生崩溃（AccessViolation，实测 Miwang/opencpop 两模型皆必崩、非文件损坏）；
-            //   BASIC 及以下安全。故 CPU 会话封顶 BASIC（图优化语义保持，输出不受影响）。DML EP 走另一套优化，不受此坑。
-            options.GraphOptimizationLevel = GraphOptimizationLevel.ORT_ENABLE_BASIC;
-        else
+        // 曾经的 BASIC 封顶已随 onnxruntime 1.23 升级取消：1.20.1 的 CPU EP 扩展层图优化在 DiffSinger 声学图上
+        //   原生崩溃（AccessViolation，EXTENDED/ALL 必崩），故当时封顶 BASIC。1.23.0 上四档优化级别实测全绿
+        //   （声学/linguistic/dur/pitch/variance/vocoder 全模型 × ORT_ENABLE_ALL），已松回 onnxruntime 默认。
+        //   降级 onnxruntime 或换用新模型若再现 Init 期 AccessViolation，先怀疑此处。
+        if (mProvider != "cpu")
             options.AppendExecutionProvider_DML(0);
         return new InferenceSession(modelPath, options);
     }

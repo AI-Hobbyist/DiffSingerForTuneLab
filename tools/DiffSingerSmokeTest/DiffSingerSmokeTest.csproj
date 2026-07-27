@@ -13,7 +13,7 @@
 
   <ItemGroup>
     <!-- 单包内 onnxruntime.dll 同含 DirectML EP 与 CPU EP；插件正式引用同一包。 -->
-    <PackageReference Include="Microsoft.ML.OnnxRuntime.DirectML" Version="1.20.1" />
+    <PackageReference Include="Microsoft.ML.OnnxRuntime.DirectML" Version="1.23.0" />
     <PackageReference Include="YamlDotNet" Version="18.0.0" />
   </ItemGroup>
 
