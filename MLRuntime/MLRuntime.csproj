@@ -16,7 +16,7 @@
 
   <ItemGroup>
     <!-- 与插件同一 onnxruntime 包（单包内含 DirectML EP 与 CPU EP）。 -->
-    <PackageReference Include="Microsoft.ML.OnnxRuntime.DirectML" Version="1.20.1" />
+    <PackageReference Include="Microsoft.ML.OnnxRuntime.DirectML" Version="1.23.0" />
   </ItemGroup>
 
   <ItemGroup>

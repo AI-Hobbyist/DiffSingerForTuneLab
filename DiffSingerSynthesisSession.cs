@@ -460,12 +460,17 @@ public sealed class DiffSingerSynthesisSession : IVoiceSynthesisSession
                 varReadback[spec.Key] = BuildReadbackSegment(spec, combined, frameTimes, nFrames);
         }
 
-        // —— gender / velocity：纯用户曲线（无方差器基线），按帧 convert 喂声学（忠实移植 OpenUtau GENC/VELC）——
-        //   无轨 / NaN 自由区 → 中性 → convert 得中性 embed（gender 0、velocity 1）；OpenUtau 不 clamp（UI 量程已界定）。
-        AddF("gender", BuildCurveInput(snapshot, KeyGender, GenderBaseline, GenderConvert(config), frameTimes, nFrames), new[] { 1, nFrames });
-        AddF("velocity", BuildCurveInput(snapshot, KeySpeed, SpeedBaseline, SpeedConvert, frameTimes, nFrames), new[] { 1, nFrames });
+        // —— gender / velocity：纯用户曲线（无方差器基线），钳到声明量程后按帧 convert 喂声学
+        //   （忠实移植 OpenUtau GENC/VELC）——无轨 / NaN 自由区 → 中性 → convert 得中性 embed（gender 0、velocity 1）。
+        //   量程必须在此自钳：宿主不担保 Evaluate 落在 [MinValue, MaxValue] 内，理由见 DiffSingerCurveInput。
+        AddF("gender", BuildCurveInput(snapshot, KeyGender, GenderBaseline, GenderMin, GenderMax,
+            DiffSingerCurveInput.GenderConvert(config.KeyShiftMin, config.KeyShiftMax), frameTimes, nFrames),
+            new[] { 1, nFrames });
+        AddF("velocity", BuildCurveInput(snapshot, KeySpeed, SpeedBaseline, SpeedMin, SpeedMax,
+            DiffSingerCurveInput.SpeedConvert, frameTimes, nFrames), new[] { 1, nFrames });
         // SHMC 口型偏移 alpha：模型原生 [-1,1]、中性 0，透传无 convert（相对量、无域转换）。
-        AddF("shift_mouth_opening", BuildCurveInput(snapshot, KeyMouthOpening, MouthOpeningBaseline, static x => x, frameTimes, nFrames), new[] { 1, nFrames });
+        AddF("shift_mouth_opening", BuildCurveInput(snapshot, KeyMouthOpening, MouthOpeningBaseline,
+            MouthOpeningMin, MouthOpeningMax, static x => x, frameTimes, nFrames), new[] { 1, nFrames });
 
         if (ac.HasInput("spk_embed"))
         {
@@ -669,25 +674,17 @@ public sealed class DiffSingerSynthesisSession : IVoiceSynthesisSession
         return result;
     }
 
-    // 纯用户曲线 → 帧级声学输入：按帧求值用户轨（无轨 / NaN 自由区 → 中性），逐帧 convert。
-    //   不 clamp（OpenUtau 亦不 clamp，连续轨的 UI 量程已界定取值范围）。
+    // 纯用户曲线 → 帧级声学输入：按帧求值用户轨，钳到声明量程 [min,max] 后逐帧 convert
+    //   （无轨 / NaN 自由区 → 中性基线）。钳位理由与逐帧实现见 DiffSingerCurveInput。
     static float[] BuildCurveInput(VoiceSynthesisSnapshot snapshot, string key, double neutral,
-        Func<double, double> convert, double[] frameTimes, int n)
+        double min, double max, Func<double, double> convert, double[] frameTimes, int n)
     {
         double[]? user = snapshot.Automations.TryGetValue(key, out var auto)
             ? auto.Evaluator.Evaluate(frameTimes)
             : null;
-        var result = new float[n];
-        for (int f = 0; f < n; f++)
-        {
-            double y = user != null && !double.IsNaN(user[f]) ? user[f] : neutral;
-            result[f] = (float)convert(y);
-        }
-        return result;
+        return DiffSingerCurveInput.Build(user, neutral, min, max, convert, n);
     }
 
-    // GENC convert（OpenUtau DiffSingerRenderer）：正 = formant 下移；缩放由声库增广范围 KeyShift*（=range）定。
-    //   range 某端为 0 ⇒ 该方向 scale=0（不移位）。闭包按当前声库现算（每会话固定）。
     // 从 part 属性抽出 model/version 选择（解析入参）。两种属性形态：快照 PropertyObject（Render）与实时只读外观（构造/订阅）。
     static ResolveProps PropsOf(PropertyObject p)
         => new(NullIfEmpty(p.GetString(KeyModel, string.Empty)), NullIfEmpty(p.GetString(KeyVersion, string.Empty)));
@@ -699,17 +696,6 @@ public sealed class DiffSingerSynthesisSession : IVoiceSynthesisSession
         => p.GetValue(key, PropertyValue.Create(string.Empty)).ToString(out var s) ? s : string.Empty;
 
     static string? NullIfEmpty(string s) => string.IsNullOrEmpty(s) ? null : s;
-
-    // gender 归一化 [-1,1]（旧 [-100,100] 的 /100 已并入刻度）：正 = formant 下移；缩放由声库增广范围 KeyShift* 定。
-    static Func<double, double> GenderConvert(VoicebankConfig config)
-    {
-        double posScale = config.KeyShiftMax == 0 ? 0 : 12 / config.KeyShiftMax;
-        double negScale = config.KeyShiftMin == 0 ? 0 : -12 / config.KeyShiftMin;
-        return x => x < 0 ? -x * posScale : -x * negScale;
-    }
-
-    // VELC convert（OpenUtau DiffSingerRenderer）：对数标度，speed 归一化后 1 = 原速，每 +1 速度 ×2。
-    static double SpeedConvert(double x) => Math.Pow(2, x - 1);
 
     // 回显段：实参（预测 + 用户 delta 合成后），clamp 到声学值域，逐帧 (全局秒, 值)。
     static List<Point> BuildReadbackSegment(VarianceSpec spec, float[] predicted, double[] frameTimes, int n)

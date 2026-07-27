@@ -88,14 +88,15 @@
          输出到 runtimes/win-x64/native/，宿主 ALC 经 deps.json（AssemblyDependencyResolver）解析——勿扁平化。 -->
   <ItemGroup>
     <PackageReference Include="YamlDotNet" Version="18.0.0" />
-    <PackageReference Include="Microsoft.ML.OnnxRuntime.DirectML" Version="1.20.1" />
+    <PackageReference Include="Microsoft.ML.OnnxRuntime.DirectML" Version="1.23.0" />
     <!-- DirectML.dll 必须随包分发：OnnxRuntime.DirectML 单包只带 onnxruntime.dll，其硬依赖的 DirectML.dll
          由传递包 Microsoft.AI.DirectML 提供、却躺在 bin/x64-win/（非 runtimes/<rid>/native 布局），SDK 默认
          不随输出复制。于是运行时只能吃用户 System32 里那份——旧 Windows（如 Win10 19045）自带的是 2020 年的
-         DirectML 1.0，而 onnxruntime 1.20 的 DML EP 用到 1.15 才有的 API → AppendExecutionProvider_DML 直接失败
+         DirectML 1.0，喂不动 onnxruntime 的 DML EP 用到的新 API → AppendExecutionProvider_DML 直接失败
          （实测某测试者 GTX1660Ti 就栽在此）。故显式引该包、把 DirectML.dll 拷进 runtimes/win-x64/native/（与
-         onnxruntime.dll 同目录，NativeLibrary 的 altered-search-path 令其优先于 System32 被加载，已实测生效）。 -->
-    <PackageReference Include="Microsoft.AI.DirectML" Version="1.15.2" GeneratePathProperty="true" />
+         onnxruntime.dll 同目录，NativeLibrary 的 altered-search-path 令其优先于 System32 被加载，已实测生效）。
+         版本须与 onnxruntime 配对：ort 1.23 配 DirectML 1.15.4（与 OpenUtau 同）。 -->
+    <PackageReference Include="Microsoft.AI.DirectML" Version="1.15.4" GeneratePathProperty="true" />
     <!-- 张量缓存键哈希：XxHash64（模型文件内容哈希 + 序列化输入）。 -->
     <PackageReference Include="System.IO.Hashing" Version="8.0.0" />
   </ItemGroup>
