@@ -2,7 +2,7 @@
 
 A [DiffSinger](https://github.com/openvpi/DiffSinger)-based singing voice synthesis engine for TuneLab. It reads DiffSinger voicebanks in the **standard community format** — a model folder containing `dsconfig.yaml` + character metadata + predictor subdirectories — directly, with no conversion or repackaging.
 
-> **Windows only.** Optional GPU acceleration (DirectML, works with most discrete/integrated GPUs); falls back to CPU when no GPU is available.
+> **Windows x64 only.** Optional GPU acceleration (DirectML, works with most discrete/integrated GPUs); falls back to CPU when no GPU is available. Windows on ARM is not supported yet — the host itself does not ship a win-arm64 build.
 
 ---
 

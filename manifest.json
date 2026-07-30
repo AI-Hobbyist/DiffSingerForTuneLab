@@ -15,5 +15,5 @@
   "engine": "DiffSinger",
   "class": "DiffSingerForTuneLab.DiffSingerVoiceEngine",
   "assembly": "DiffSingerForTuneLab.dll",
-  "platforms": ["win"]
+  "platforms": ["win-x64"]
 }

@@ -2,7 +2,7 @@
 
 基于 [DiffSinger](https://github.com/openvpi/DiffSinger) 的 TuneLab 歌声合成引擎。直接读取**社区标准格式**的 DiffSinger 声库——即包含 `dsconfig.yaml` + 角色元数据 + 预测器子目录的模型文件夹——无需转换、无需重新打包。
 
-> 仅支持 **Windows**。可选 GPU 加速（DirectML，兼容大多数独显/核显），无 GPU 时自动可切 CPU。
+> 仅支持 **Windows x64**。可选 GPU 加速（DirectML，兼容大多数独显/核显），无 GPU 时自动可切 CPU。暂不支持 Windows on ARM——宿主自身也还没有 win-arm64 版本。
 
 ---
 

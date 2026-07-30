@@ -36,6 +36,23 @@ foreach ($f in 'DirectML.dll','DirectML.pdb','DirectML.Debug.dll','DirectML.Debu
     if (Test-Path $p) { Remove-Item $p -Force }
 }
 
+# 只保留 win-x64 的原生库：manifest 声明 platforms=["win-x64"]，别的 RID 树在任何情形下都不会被加载
+# ——宿主自身只发 win-x64 / osx-arm64 / linux-x64（无 win-arm64），而后两者上本插件整个被 platforms 过滤掉。
+# onnxruntime 的 nuget 却按多 RID 打包（win-arm64 那份 ~17MB，占包四成），故在此剪除。
+# 宿主经 deps.json 按当前 RID 解析原生库，剪掉用不到的 RID 不影响 win-x64 的解析。
+# 将来宿主支持 win-arm64 时：把这里放开 + csproj 补拷 arm64 的 DirectML.dll + MLRuntime 按 RID publish
+# （apphost 是 per-RID 的），且必须在真机实测后再发——不是删掉这段就能支持。
+$keepRid = 'win-x64'
+$runtimesDir = Join-Path $source "runtimes"
+if (Test-Path $runtimesDir) {
+    foreach ($rid in Get-ChildItem $runtimesDir -Directory) {
+        if ($rid.Name -eq $keepRid) { continue }
+        $size = (Get-ChildItem $rid.FullName -Recurse -File | Measure-Object -Property Length -Sum).Sum
+        Remove-Item $rid.FullName -Recurse -Force
+        Write-Host ("已剪除 runtimes/{0}（{1:N1} MB，非 {2}）" -f $rid.Name, ($size / 1MB), $keepRid)
+    }
+}
+
 # 从 manifest.json 取 id + version 命名产物
 $desc = Get-Content (Join-Path $source "manifest.json") -Raw | ConvertFrom-Json
 $tlx = Join-Path $out ("$($desc.id)-$($desc.version).tlx")
