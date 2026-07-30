@@ -53,11 +53,13 @@
     <Content Include="manifest.json" CopyToOutputDirectory="PreserveNewest" />
     <!-- 移植/捆绑第三方（OpenUtau MIT）的署名，随包分发。 -->
     <Content Include="THIRD-PARTY-NOTICES.md" CopyToOutputDirectory="PreserveNewest" />
-    <!-- 包级 README 详情页：宿主在扩展详情窗渲染包根的 README.md（README.<culture>.md 优先）。
-         基准 = 英文（README.md，覆盖所有非精确命中语言）；中文经 README.zh-CN.md 精确命中。
-         源文件放 packaging/（与开发向的仓库根 README.md 区分），经 Link 改名落到输出根 = 包根。 -->
-    <Content Include="packaging\README.md" Link="README.md" CopyToOutputDirectory="PreserveNewest" />
-    <Content Include="packaging\README.zh-CN.md" Link="README.zh-CN.md" CopyToOutputDirectory="PreserveNewest" />
+    <!-- 条目级 introduction（详情窗正文 + agent 按需拉取）：宿主只认 manifest 显式声明的路径，
+         **不再**按 README.md 之类的约定名去发现，也没有 <base>.<culture>.md 那种隐式后缀约定
+         —— 语言变体走 manifest 的 localizations.<lang>.introduction 指名（见 manifest.json）。
+         基准 = 英文 Introduction.md（覆盖所有非精确命中语言），中文 = Introduction.zh-CN.md。
+         源文件放 packaging/（与开发向的仓库根 README.md 分家），经 Link 落到输出根 = 包根。 -->
+    <Content Include="packaging\Introduction.md" Link="Introduction.md" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="packaging\Introduction.zh-CN.md" Link="Introduction.zh-CN.md" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <!-- 把 DirectML.dll 拷进 runtimes/win-x64/native/（与 onnxruntime.dll 同目录）——见上方 PackageReference 注释。

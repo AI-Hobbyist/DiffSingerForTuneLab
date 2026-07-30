@@ -4,6 +4,12 @@
   "version": "0.1.0",
   "author": "Jingang",
   "description": "DiffSinger 歌声合成引擎。",
+  "introduction": "Introduction.md",
+  "localizations": {
+    "zh-CN": {
+      "introduction": "Introduction.zh-CN.md"
+    }
+  },
   "sdk-version": "1.0",
   "type": "voice",
   "engine": "DiffSinger",

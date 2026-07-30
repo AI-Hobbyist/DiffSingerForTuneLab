@@ -11,7 +11,8 @@ internal static class L
     {
         ["zh-CN"] = new()
         {
-            ["Voicebank directories (separate with ;)"] = "声库目录（多个用 ; 分隔）",
+            ["Voicebank directories"] = "声库目录",
+            ["Vocoder directories"] = "声码器目录",
             ["Execution device"] = "执行设备",
             ["GPU (DirectML)"] = "GPU（DirectML）",
             ["CPU"] = "CPU",
