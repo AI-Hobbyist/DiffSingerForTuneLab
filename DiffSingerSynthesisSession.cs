@@ -436,28 +436,35 @@ public sealed class DiffSingerSynthesisSession : IVoiceSynthesisSession
         AddF("blend", blendFlat, new[] { mixRows, nFrames });
         AddF("f0", acousticF0, new[] { 1, nFrames });   // 声学吃移调 f0（无音区偏移时即原始 f0 同引用）
 
-        // —— variance：预测 + 用户 delta 合成喂声学，同一份实参产回显 ——
-        //   用户曲线按帧求值（连续轨：未编辑处=中性基线 → Delta 恒得纯预测；编辑处 → 叠加），clamp 到声学值域。
-        //   回显（Use && Predict）= 实参（预测 + 用户 delta、clamp 后）——与 pitch 回显同语义：所见即喂给声学的值。
-        //   mulaw 声库（voicing_domain）三明治：预测解码成 dB 进公式、出公式编码回线上域喂声学；
-        //   公式/回显/clamp 恒 dB 语义（见 VoicingDomainCodec 与 schema §14.2）。db 声库 codec=null、路径不变。
+        // —— variance：预测 → 偏差轨叠加 → 实参轨覆盖，合成结果喂声学、同一份实参产回显 ——
+        //   两条用户曲线按帧求值：实参轨（分段，未绘制处 NaN → 用预测）、偏差轨（连续，未编辑处 = 中性基线
+        //   → Delta 恒等）。故"两条都没动"= 纯预测，与历史行为逐比特一致。
+        //   回显（Use && Predict）= 这份合成实参——与 pitch 回显同语义：所见即喂给声学的值。
+        //   mulaw 声库（voicing_domain）三明治：预测解码成 dB 进合成、出合成编码回线上域喂声学；
+        //   合成/回显/clamp 恒 dB 语义（见 VoicingDomainCodec 与 schema §14.2）。db 声库 codec=null、路径不变。
         var voicingCodec = VoicingDomainCodec.For(config.VoicingDomain, config.VoicingMu);
         var varReadback = new Dictionary<string, IReadOnlyList<Point>>();
         foreach (var spec in Variances)
         {
             float[]? predicted = varCurves[spec.Key];
-            double[]? user = snapshot.Automations.TryGetValue(spec.Key, out var auto)
-                ? auto.Evaluator.Evaluate(frameTimes)
+            // 实参轨 = `<key>_actual`（与回显配对）；偏差轨 = 裸 key（生态标准名，见 DiffSingerDeclarations）。
+            //   spec.Key 同时还是声学的 ONNX 输入名，三者各在自己的命名空间、互不干涉。
+            double[]? actual = snapshot.Automations.TryGetValue(ActualKey(spec.Key), out var actualTrack)
+                ? actualTrack.Evaluator.Evaluate(frameTimes)
+                : null;
+            double[]? offset = snapshot.Automations.TryGetValue(spec.Key, out var offsetTrack)
+                ? offsetTrack.Evaluator.Evaluate(frameTimes)
                 : null;
             var codec = spec.Key == "voicing" ? voicingCodec : null;
-            var combined = CombineVariance(spec, predicted, user, nFrames, codec);
+            var combined = CombineVariance(spec, predicted, actual, offset, nFrames, codec);
 
             if (ac.HasInput(spec.Key))
                 AddF(spec.Key, codec == null ? combined : Array.ConvertAll(combined, codec.DbToWire),
                     new[] { 1, nFrames });
 
+            // 回显按**回显轨 key**（= 实参轨 key）入账：产物 map 的键须与 mReadbackConfigs 声明一致。
             if (spec.Use(config) && spec.Predict(config) && predicted != null)
-                varReadback[spec.Key] = BuildReadbackSegment(spec, combined, frameTimes, nFrames);
+                varReadback[ActualKey(spec.Key)] = BuildReadbackSegment(spec, combined, frameTimes, nFrames);
         }
 
         // —— gender / velocity：纯用户曲线（无方差器基线），钳到声明量程后按帧 convert 喂声学
@@ -652,27 +659,11 @@ public sealed class DiffSingerSynthesisSession : IVoiceSynthesisSession
         return slash > 0 ? symbol[(slash + 1)..] : symbol;
     }
 
-    // 预测 x 与用户值 y（UI 单位，NaN 自由区代入中性）按 OpenUtau delta 函数合成，clamp 到声学值域。
-    //   预测缺失（null，即 !Predict 而声学仍需该输入）→ 以 0 为基线降级，仅叠加用户 delta。
-    //   codec 非空（mulaw voicing）：预测是模型线上值、先解码成 dB 再进公式；返回值恒 dB 语义
-    //   （回显直接用，喂声学前由调用方编码回线上域）。
-    static float[] CombineVariance(VarianceSpec spec, float[]? predicted, double[]? user, int n,
+    // 实参 = 预测 → 实参轨绘制段**覆盖** → 偏差轨 delta **叠加** → clamp 到声学值域。
+    //   数值口径与三级顺序在 [DiffSingerVarianceCurve.cs](DiffSingerVarianceCurve.cs)（零依赖、有单测）。
+    static float[] CombineVariance(VarianceSpec spec, float[]? predicted, double[]? actual, double[]? offset, int n,
         VoicingDomainCodec? codec = null)
-    {
-        var result = new float[n];
-        for (int f = 0; f < n; f++)
-        {
-            float x = predicted == null ? 0f : (f < predicted.Length ? predicted[f] : predicted[^1]);
-            if (codec != null) x = codec.WireToDb(x);
-            // 用户值钳到编辑量程：宿主 UI 落笔时钳制，但数据层无硬契约（锚点+默认值合成、跨引擎同 key 复用、
-            //   手改工程皆可越界），而 voicing 的幂式对越界输入极敏感（偶次幂/分母变号），必须本地兜底。
-            double y = user != null && !double.IsNaN(user[f])
-                ? Math.Clamp(user[f], spec.EditMin, spec.EditMax)
-                : spec.Neutral;
-            result[f] = (float)Math.Clamp(spec.Delta(x, (float)y), spec.AcousticMin, spec.AcousticMax);
-        }
-        return result;
-    }
+        => DiffSingerVarianceCurve.Combine(spec.Curve, predicted, actual, offset, n, codec);
 
     // 纯用户曲线 → 帧级声学输入：按帧求值用户轨，钳到声明量程 [min,max] 后逐帧 convert
     //   （无轨 / NaN 自由区 → 中性基线）。钳位理由与逐帧实现见 DiffSingerCurveInput。

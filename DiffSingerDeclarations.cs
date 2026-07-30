@@ -49,6 +49,16 @@ public static class DiffSingerDeclarations
     public static string SlotKey(string baseKey, int slot) => $"{baseKey}:{slot}";
     // 槽显示名：仅一槽时省略序号（key 不受影响，槽数变化时同一 key 显示名会跟着变）。
     public static string SlotDisplay(string label, int slot, int slots) => slots == 1 ? label : $"{label} {slot}";
+    // 实参轨 key：<参数名>_actual。实参轨与回显轨**同用此 key**——同 Id 即宿主的「配对」判据
+    //   （点亮实参轨带亮回显、右键可把回显整段烘焙成实参轨锚点，见宿主 SynthesisBake），故两侧必须一致。
+    //   为什么加后缀的是实参轨而不是偏差轨：裸名 `energy` 等是**生态标准名 + 存进工程的 key**，按 §14.1/§14.2
+    //   该留给归一化偏差轨（别的引擎复用同 key 时值在量程内、语义相近）；绝对声学量与具体模型绑定、
+    //   本就不该占公共名。回显 key 不进工程文件（每次合成现算），跟着改零成本。
+    public static string ActualKey(string key) => key + "_actual";
+    // 实参轨显示名："能量：实参"（冒号而非括号——tabbar 横向空间紧，全角括号占两格、冒号一格）。
+    //   key 带 `_actual` 后缀但显示名不带——宿主明文不要求配对两侧同名，
+    //   故三条轨的呈现是：偏差轨「能量」、实参轨「能量：实参」、回显 chip「能量」。
+    public static string ActualDisplay(string label) => string.Format(L.Tr("{0}: actual"), label);
     // part 属性读槽数，clamp [0, MaxMixSlots]。
     public static int MixSlots(PropertyObject partProperties)
         => Math.Clamp((int)Math.Round(partProperties.GetDouble(KeyMixSlots, 0)), 0, MaxMixSlots);
@@ -65,15 +75,30 @@ public static class DiffSingerDeclarations
     public const double ToneShiftBaseline = 0, ToneShiftMin = -12, ToneShiftMax = 12;
 
     public readonly record struct VarianceSpec(
-        string Key, string Display, string Color,
+        string Key, string Display, string Color, string ActualColor,
         Func<VoicebankConfig, bool> Use, Func<VoicebankConfig, bool> Predict,
-        double EditMin, double EditMax, double Neutral,
+        double OffsetMin, double OffsetMax, double OffsetNeutral,
         double AcousticMin, double AcousticMax,
-        Func<float, float, float> Delta);
+        Func<float, float, float> Delta)
+    {
+        // 三级合成的数值面（零依赖、有单测）：本记录的数值字段照原样转过去，不另立真相源。
+        //   internal（VarianceCurveSpec 与 VoicingDomainCodec 皆为插件内部类型，不进公开面）。
+        internal VarianceCurveSpec Curve => new(OffsetMin, OffsetMax, OffsetNeutral, AcousticMin, AcousticMax, Delta);
+    }
 
-    // 编辑轨（delta 语义）归一化到小数：energy/breath/tension 中性 0、量程 [-1,1]；voicing 中性 1、量程 [0,1.25]。
-    //   Delta(x=预测声学值, y=用户归一化值) 系数随之 ×100：y=1 等价旧 y=100（energy/breath ±12dB、tension ±5）。
-    //   AcousticMin/Max 为回显轨的真实声学单位（dB）值域；EditMin/Max 兼作合成期输入 clamp（宿主数据层无量程硬契约）。
+    // 每条 variance 参数暴露**两条编辑轨 + 一条回显轨**（分工同宿主参照实现 tests/plugins/V1.Voice，
+    //   但后缀加在哪条上刻意相反，理由见 ActualKey）：
+    //   · 偏差轨 `<key>`（连续、归一化、裸 key、显示名即参数名）—— 基础调教入口。相对语义：不管模型给什么，
+    //     整体"这儿响一点/气一点"。重合成后仍跟随模型新输出，故换 model/version/seed 后手笔不作废。
+    //   · 实参轨 `<key>_actual`（分段、真实声学单位、显示名"能量：实参"）—— 细节修改入口，与回显**同 key、同量程**
+    //     ⇒ 宿主识别为配对：点亮即带亮回显、右键可把回显烘焙进来（"抓住模型这根线再改中间一段"）。
+    //   · 回显轨 `<key>_actual`（只读、同量程、显示名用裸名，见 BuildReadbackConfigs）。
+    //   合成顺序（见 CombineVariance）：预测 → 偏差轨 Delta 叠加 → 实参轨绘制段整帧覆盖 → clamp 喂下游。
+    //   实参轨在最后 = 用户的最终决定（画的值就是喂下去的值），这也是宿主"把回显烘焙进实参轨"能保持中性的前提。
+    // 偏差轨（delta 语义）归一化到小数：energy/breath/tension 中性 0、量程 [-1,1]；voicing 中性 1、量程 [0,1.25]。
+    //   Delta(x=预测声学值, y=用户归一化值) 系数按小数刻度 ×100：y=1 等价旧 y=100（energy/breath ±12dB、tension ±5）。
+    //   AcousticMin/Max 三处复用：实参轨量程、回显轨量程、合成期输出 clamp；OffsetMin/Max 兼作偏差轨输入 clamp
+    //   （宿主数据层无量程硬契约）。
     //   voicing 有意偏离 OpenUtau（其满偏 −12dB 够不着静音底、无法做纯气声段），分两支：
     //     下行（y≤1）饱和有理项 + 十二次幂跳水项：起步斜率 48（浅笔即可闻）、消声点实测 ≈ y 0.2、y=0 恒精确触底 −96。
     //       导数刻意非单调（先陡后缓再跳水）：起步斜率 48 > 可听区平均斜率 ~32，中段必须放缓找平，
@@ -81,15 +106,21 @@ public static class DiffSingerDeclarations
     //     上行（y>1）线性 +48(y−1)：满偏 1.25 = +12dB（与 energy 正向满偏对齐、避开 0dBFS 过载区）；
     //       中性线两侧斜率相等（48）、过线无顿挫（仅二阶导跳变）。
     //     预测 < −72dB 的帧（本就近静音）下行中段轻微下越 −96，由合成期 clamp 兜住。详见 schema 文档 §14.2。
+    // 配色：偏差轨与回显轨用 Color（与本轨历来配色一致），实参轨用同色系提亮的 ActualColor——
+    //   同一参数一眼可辨为一家，细线又能压在半透明回显面积上看清。
     public static readonly VarianceSpec[] Variances =
     {
-        new("energy",      "Energy",      "#E573A5", c => c.UseEnergyEmbed,      c => c.PredictEnergy,      -1, 1, 0, -96, 0, (x, y) => x + y * 12),
-        new("breathiness", "Breathiness", "#73E5C2", c => c.UseBreathinessEmbed, c => c.PredictBreathiness, -1, 1, 0, -96, 0, (x, y) => x + y * 12),
-        new("voicing",     "Voicing",     "#C2E573", c => c.UseVoicingEmbed,     c => c.PredictVoicing,      0, 1.25, 1, -96, 0,
+        new("energy",      "Energy",      "#E573A5", "#F0A8C6", c => c.UseEnergyEmbed,      c => c.PredictEnergy,      -1, 1, 0, -96, 0, (x, y) => x + y * 12),
+        new("breathiness", "Breathiness", "#73E5C2", "#A8F0DB", c => c.UseBreathinessEmbed, c => c.PredictBreathiness, -1, 1, 0, -96, 0, (x, y) => x + y * 12),
+        new("voicing",     "Voicing",     "#C2E573", "#DBF0A8", c => c.UseVoicingEmbed,     c => c.PredictVoicing,      0, 1.25, 1, -96, 0,
             (x, y) => y > 1 ? x + 48 * (y - 1)
                             : x - 48 * (1 - y) / (2 - y) - (x + 72) * MathF.Pow(1 - y, 12)),
-        new("tension",     "Tension",     "#A573E5", c => c.UseTensionEmbed,     c => c.PredictTension,     -1, 1, 0, -10, 10, (x, y) => x + y * 5),
+        new("tension",     "Tension",     "#A573E5", "#C6A8F0", c => c.UseTensionEmbed,     c => c.PredictTension,     -1, 1, 0, -10, 10, (x, y) => x + y * 5),
     };
+
+    // 无预测器（!Predict 而声学仍需该输入）时的基线：取 0（声学单位）再叠偏差轨（与历史行为一致：那时 x 也取 0）。
+    //   绝对量没有"中性值"可言，这只是缺基线时的唯一确定选择；实参轨画满即可完全接管。
+    public const float VarianceFallback = DiffSingerVarianceCurve.Fallback;
 
     // manifest retake 三位（legacy → 全 false ⇒ 不暴露任何 seed 轨）。
     public static (bool Acoustic, bool Pitch, bool Variance) RetakeOf(ResolvedVoice resolved)
@@ -118,9 +149,11 @@ public static class DiffSingerDeclarations
         VoicebankConfig config, (bool Acoustic, bool Pitch, bool Variance) retake)
     {
         var map = new OrderedMap<PropertyKey, AutomationConfig>();
+        // 呈现次序（tabbar 按声明序排）= 基础调教区（四条偏差轨 + gender/speed/…）→ 实参轨四条 → seed 三条，
+        //   越常用越靠前。偏差轨与实参轨**各自成块、不穿插**：穿插会让常用的四条被高级轨隔开、横向找轨要跳着看。
         foreach (var v in Variances)
             if (v.Use(config))
-                map.Add((v.Key, L.Tr(v.Display)), Continuous(v.Color, v.Neutral, v.EditMin, v.EditMax));
+                map.Add((v.Key, L.Tr(v.Display)), Continuous(v.Color, v.OffsetNeutral, v.OffsetMin, v.OffsetMax));
 
         if (config.UseKeyShiftEmbed)
             map.Add((KeyGender, L.Tr("Gender")), Continuous("#E5A573", GenderBaseline, GenderMin, GenderMax));
@@ -135,7 +168,14 @@ public static class DiffSingerDeclarations
         if (config.VocoderPitchControllable)
             map.Add((KeyToneShift, L.Tr("Tone shift")), Continuous("#73E573", ToneShiftBaseline, ToneShiftMin, ToneShiftMax));
 
+        // 实参轨（分段、真实声学单位、`_actual` key、与回显配对）：重度用户的细节修改入口，
+        //   四条**连成一块**、排在基础调教区之后 seed 之前——与上面的偏差轨一一对应、组内顺序同 Variances 表序。
+        foreach (var v in Variances)
+            if (v.Use(config))
+                map.Add((ActualKey(v.Key), ActualDisplay(L.Tr(v.Display))), Piecewise(v.ActualColor, v.AcousticMin, v.AcousticMax));
+
         // seed 轨：仅当 manifest 声明对应 retake 能力时暴露（连续、基线 0、量程 [0,SeedCurveMax]）。
+        //   排在最后——三条里最不常用（换 take 是偶发动作，不是逐句调教）。
         if (retake.Pitch)
             map.Add((KeySeedPitch, L.Tr("Pitch seed")), Continuous("#9E9E9E", 0, 0, SeedCurveMax, randomizable: true));
         if (retake.Variance)
@@ -162,13 +202,15 @@ public static class DiffSingerDeclarations
         }
     }
 
-    // 只读回显轨：仅当声学接受该量为输入且方差器能产基线时——显示实参（预测 + 用户 delta 合成后）。
+    // 只读回显轨：仅当声学接受该量为输入且方差器能产基线时——显示实参（预测 → 偏差轨叠加 → 实参轨覆盖后的值）。
+    //   key **必须**与实参轨一致（`_actual`，配对判据只认 Id）；量程一致是烘焙不出界的前提；
+    //   显示名则用裸名（chip 上就叫"能量"——用户认的是物理量，"：实参"只用来标可写那条）。
     public static OrderedMap<PropertyKey, AutomationConfig> BuildReadbackConfigs(VoicebankConfig config)
     {
         var map = new OrderedMap<PropertyKey, AutomationConfig>();
         foreach (var v in Variances)
             if (v.Use(config) && v.Predict(config))
-                map.Add((v.Key, L.Tr(v.Display)), Piecewise(v.Color, v.AcousticMin, v.AcousticMax));
+                map.Add((ActualKey(v.Key), L.Tr(v.Display)), Piecewise(v.Color, v.AcousticMin, v.AcousticMax));
         return map;
     }
 

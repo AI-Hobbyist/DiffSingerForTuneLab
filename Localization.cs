@@ -39,6 +39,9 @@ internal static class L
             ["Mouth opening"] = "口型",
             ["Expressiveness"] = "表现力",
             ["Tone shift"] = "音区偏移",
+            // 实参轨显示名模板（{0} = 参数名）：可写的那条标注"实参"，同 key 的只读回显轨仍用裸名。
+            //   用冒号而非括号——tabbar 横向空间紧，全角括号占两格、全角冒号一格。
+            ["{0}: actual"] = "{0}：实参",
             ["Energy"] = "能量",
             ["Breathiness"] = "气声",
             ["Voicing"] = "发声",

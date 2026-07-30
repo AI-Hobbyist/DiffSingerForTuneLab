@@ -20,6 +20,8 @@
     <Compile Include="..\..\DiffSingerFrames.cs" />
     <Compile Include="..\..\DiffSingerSpeakerMix.cs" />
     <Compile Include="..\..\DiffSingerCurveInput.cs" />
+    <Compile Include="..\..\DiffSingerVarianceCurve.cs" />
+    <Compile Include="..\..\VoicingDomainCodec.cs" />
   </ItemGroup>
 
 </Project>
