@@ -414,7 +414,7 @@ TuneLab 在切换引擎 / 音源时，**不清空 part 里已存的属性与 aut
 | `energy_actual` | 绝对（分段，实参轨） | `[-96, 0]` dB | 无（NaN=未绘制） | 绘制值即该帧的 dB 终值 | 覆盖「预测+`energy` 偏差」→ clamp，见下 |
 | `breathiness_actual` | 绝对（分段，实参轨） | `[-96, 0]` dB | 无（NaN=未绘制） | 同上 | 覆盖「预测+`breathiness` 偏差」→ clamp |
 | `voicing_actual` | 绝对（分段，实参轨） | `[-96, 0]` dB | 无（NaN=未绘制） | 同上；−96 = 数字静音底（纯气声/耳语） | 覆盖「预测+`voicing` 偏差」→ clamp（mulaw 声库出口再编码回线上域） |
-| `tension_actual` | 绝对（分段，实参轨） | `[-10, 10]` | 无（NaN=未绘制） | 绘制值即该帧的声学单位终值 | 覆盖「预测+`tension` 偏差」→ clamp |
+| `tension_actual` | 绝对（分段，实参轨） | `[-10, 10]`（实际天花板 ±9.21，见下） | 无（NaN=未绘制） | 绘制值即该帧的 logit 终值 | 覆盖「预测+`tension` 偏差」→ clamp |
 | `expressiveness` | 混合比 | `[0, 1]` | `1` | 1=满表现力（模型自由轮廓）、0=贴谱面音高（OpenUtau PEXP 0~100 小数化） | 逐帧喂 pitch 模型 `expr` 口；仅 dspitch `use_expr` 时暴露 |
 | `tone_shift` | 加性 | `[-12, 12]` | `0` | 半音（物理单位不归一；OpenUtau SHFC ±1200 音分）：听感音高不变、音色换音区 | 声学 `f0 × 2^(v/12)`、variance pitch `+v`、声码器吃原始 f0；仅 `pitch_controllable` 声码器时暴露 |
 | `mix:<suffix>` | 比例 | `[0, 1]` | `0` | 0=不混入；逐帧标准化(Σ>1 归一) | 直接累积（[DiffSingerSpeakerMix.cs](../DiffSingerSpeakerMix.cs)） |
@@ -464,6 +464,25 @@ TuneLab 在切换引擎 / 音源时，**不清空 part 里已存的属性与 aut
 - 边角：预测 < −72 dB 的帧（本就近静音）跳水项系数变负、中段轻微越过 −96；用户值越界（宿主数据层无量程硬契约：锚点+默认值合成、跨引擎同 key 复用、手改工程）会使偶次幂/分母变号产生荒谬值——两者皆由合成期双 clamp 兜住（输入钳 `OffsetMin/Max`、输出钳声学值域，见 `CombineVariance`）。
 - 设计过程曾比较：加法 ±12/±48（前者够不着底、后者顶部灵敏度糙 4 倍且消声点 0.46 偏高）、归一化 lerp `(x+96)y−96`（顶部糙 ~7 倍、消声点 0.66）、线性+低次幂混合（p3/p4 起步斜率 12~24，"1 附近变化太小"）、分段 S 曲线（规格直接编码但非光滑）——现式为分段 S 的光滑等效替代。
 - 实参轨的出现**不削弱**这条曲线的价值：它管的是"整体压一档"的相对手感（换模型不作废），实参轨管的是"这一小段就要这个值"。两者互补，故公式一分未动。
+
+**tension 的域：logit，边界比看起来窄。** tension 不是 dB，而是**比值的 logit**：`tension = ln(r/(1−r))`，
+`r` = 非基频谐波振幅 / 全谐波振幅 ∈ [0,1]（上游 `utils/binarizer_utils.py` 的 `get_tension_base_harmonic`）。
+logit 本身无界，但提取时 `r` 先被**硬编码**（不是配置项）clip 到 `[1e-4, 1−1e-4]`，于是训练目标的绝对上限是
+`ln((1−1e-4)/1e-4) ≈ 9.2103`。因此：
+
+- 上游 hparams `tension_logit_min/max`（默认 ∓10）只管两件事——归一化尺度、以及输出 clamp。作者把它调窄
+  （如 ±8）则模型自己截得更紧，调宽（如 ±15）也没有数据支撑它走到那儿。**所以 `[-10, 10]` 对任何配置都是
+  安全超集**，插件不必、也无法探知每个库的具体设置：这两个值**不写进 dsconfig**（导出器只写 `predict_*` /
+  `voicing_domain` / `voicing_mu` 等），而是烘焙成 variance 图里 `Clip` 节点的常量——那是**图内部结构、不是
+  契约**（简化器会折叠重排、多通道靠 trace 展开），去挖它猜错的代价比不挖更大，故不挖。
+  （唯一的理论缝：`.ds` 属性可直接提供外部 tension 曲线、绕过上述 clip；但 `tension > 9.21` 意味着基频谐波
+  只占全谐波振幅万分之一以下，物理上已不成立，故不为它设计。）
+- 另外三条同样是超集，理由不同：它们的 clamp 上界在 `param_adaptor` 里**写死为 `0`**，下界默认 −96 即 16-bit
+  动态范围底。注意它们的**归一化** range 上界是 `*_db_max`（默认 energy −12、breathiness/voicing −20），
+  与 clamp 上界不同源——上表四条取的一律是 **clamp 域**。
+- **手感（画实参轨时有用）**：`0` ↔ `r = 0.5`；`±4` ↔ `r ≈ 0.982 / 0.018`，再往外进入 sigmoid 饱和区、
+  听感几乎不再变化；`±10` 的最后约 0.8 是取不到的空头。故 tension 实参轨的有效行程集中在中间小半段，
+  与 energy 那种全程可用的 dB 轨手感不同。
 
 **mulaw 声库（dsconfig `voicing_domain: mulaw`，fork feat/mulaw-voicing 实验）**：voicing 线上值改为谐波 RMS 的 mu-law 压缩振幅（`voicing_mu` 缺省 255）线性映射到同一 `[-96,0]` 数值域（上游 API 冻结下的伪装 dB）。**上表公式与两条编辑轨 / 回显轨 / 工程文件恒为 dB 语义**——十二次幂三锚定是感知规格、与模型编码无关；插件在模型边界做三明治转换（[VoicingDomainCodec.cs](../VoicingDomainCodec.cs)：预测的线上值→振幅→dB 进合成，喂声学前反向编码；两种表示均为振幅的单调双射，转换精确），故两种声库上用户画的同一条曲线含义完全一致。红利：实参触底 −96 时 mulaw 域编码为**精确零振幅**（真·静音，而非 db 域 clamp 出的 −96dB 余响）。域标记从声学与 dsvariance 各自的 dsconfig 读取，**缺省 `db` = 历史声库零迁移**；两侧同时在用却异域/异 μ = 坏导出，log 后按 acoustic 侧处理（[VoicebankConfig.cs](../VoicebankConfig.cs) `ReadVoicingDomain`）。数值契约由 SmokeTest `--mulaw-codec` 自检钉住（锚点+全值域往返+真零特判）。
 
